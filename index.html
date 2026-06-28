@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  import { getFirestore, doc, getDoc, setDoc, deleteDoc, writeBatch, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyAgehd9UslGFUdP4Cw3dWVd3PWGqAXexsQ",
@@ -48,6 +48,106 @@
       console.error('Firebase error:', e);
     }
   };
+
+  // ───────────────────────────────────────────────────────────
+  //  Count Code Date — cross-device sync (single newest dataset)
+  //  Collection 'ccd_data':
+  //    manifest  -> {chunks,total,uploadedAt,fileName}
+  //    chunk_0.. -> {rows:[...]}   (dataset split into pieces)
+  //    progress  -> {cf,cv}        (confirmation progress, JSON strings)
+  //  On every new upload the old chunks + progress are deleted first,
+  //  so Firebase always holds ONLY the newest file.
+  // ───────────────────────────────────────────────────────────
+  const CCD_COL = 'ccd_data';
+  const CCD_CHUNK = 150; // rows per document
+
+  // Replace the stored dataset with a brand-new one (delete old → write new)
+  window.ccdSaveDataset = async function(rowsArr, fileName){
+    const manifestRef = doc(db, CCD_COL, 'manifest');
+    // 1) delete every old chunk based on the previous manifest
+    try{
+      const old = await getDoc(manifestRef);
+      if(old.exists()){
+        const n = old.data().chunks || 0;
+        for(let s=0; s<n; s+=400){
+          const batch = writeBatch(db);
+          for(let i=s; i<Math.min(n, s+400); i++) batch.delete(doc(db, CCD_COL, 'chunk_'+i));
+          await batch.commit();
+        }
+      }
+    }catch(e){ console.warn('ccd: clearing old chunks failed', e); }
+    // 2) clear old progress so a new file starts fresh
+    try{ await deleteDoc(doc(db, CCD_COL, 'progress')); }catch(e){}
+    // 3) write the new chunks
+    const chunks = Math.ceil(rowsArr.length / CCD_CHUNK);
+    for(let i=0; i<chunks; i++){
+      const slice = rowsArr.slice(i*CCD_CHUNK, (i+1)*CCD_CHUNK);
+      await setDoc(doc(db, CCD_COL, 'chunk_'+i), { rows: slice });
+    }
+    // 4) write the manifest last (marks the upload as complete)
+    await setDoc(manifestRef, { chunks, total: rowsArr.length, fileName: fileName||'', uploadedAt: Date.now() });
+    return { chunks, total: rowsArr.length };
+  };
+
+  // Read the newest dataset back. Returns {rows, meta} or null if none.
+  window.ccdLoadDataset = async function(){
+    const snap = await getDoc(doc(db, CCD_COL, 'manifest'));
+    if(!snap.exists()) return null;
+    const m = snap.data();
+    const out = [];
+    for(let i=0; i<(m.chunks||0); i++){
+      const c = await getDoc(doc(db, CCD_COL, 'chunk_'+i));
+      if(c.exists()) out.push(...(c.data().rows||[]));
+    }
+    return { rows: out, meta: m };
+  };
+
+  // Save confirmation progress (whole cf/cv objects, last-write-wins)
+  window.ccdSaveProgress = async function(cfObj, cvObj){
+    try{
+      await setDoc(doc(db, CCD_COL, 'progress'), {
+        cf: JSON.stringify(cfObj||{}),
+        cv: JSON.stringify(cvObj||{}),
+        updatedAt: Date.now()
+      });
+    }catch(e){ console.warn('ccd: save progress failed', e); }
+  };
+
+  // Live-subscribe to progress changes from other devices
+  window.ccdSubscribeProgress = function(cb){
+    try{
+      return onSnapshot(doc(db, CCD_COL, 'progress'), snap=>{
+        let cfObj = {}, cvObj = {};
+        if(snap.exists()){
+          const d = snap.data();
+          try{ cfObj = JSON.parse(d.cf||'{}'); }catch(e){}
+          try{ cvObj = JSON.parse(d.cv||'{}'); }catch(e){}
+        }
+        cb(cfObj, cvObj);
+      });
+    }catch(e){ console.warn('ccd: subscribe failed', e); }
+  };
+
+  // Delete the entire stored dataset + progress from Firebase
+  window.ccdClearDataset = async function(){
+    const manifestRef = doc(db, CCD_COL, 'manifest');
+    try{
+      const old = await getDoc(manifestRef);
+      if(old.exists()){
+        const n = old.data().chunks || 0;
+        for(let s=0; s<n; s+=400){
+          const batch = writeBatch(db);
+          for(let i=s; i<Math.min(n, s+400); i++) batch.delete(doc(db, CCD_COL, 'chunk_'+i));
+          await batch.commit();
+        }
+      }
+    }catch(e){ console.warn('ccd: clear chunks failed', e); }
+    try{ await deleteDoc(manifestRef); }catch(e){}
+    try{ await deleteDoc(doc(db, CCD_COL, 'progress')); }catch(e){}
+  };
+
+  // The inline script registers window.onCcdReady before this module runs.
+  if(typeof window.onCcdReady === 'function') window.onCcdReady();
 </script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
@@ -85,7 +185,10 @@ body{background:#eef2f7;min-height:100vh}
 
 /* Aisle grid */
 .ag-wrap{background:#fff;padding:0 7rem 1.5rem}
+@media (max-width:1024px){.ag-wrap{padding:0 2rem 1.5rem}}
+@media (max-width:640px){.ag-wrap{padding:0 1rem 1.5rem}}
 .ag{display:grid;grid-template-columns:repeat(4,1fr);gap:.875rem;padding-top:1rem}
+@media (max-width:640px){.ag{gap:.625rem}}
 .ac{background:#fff;border:1.5px solid #93c5fd;border-radius:12px;padding:1rem;cursor:pointer;text-align:center;transition:background .15s,border-color .15s,color .15s}
 
 
@@ -233,7 +336,23 @@ let lifeMap=Object.assign({},BUILT_IN_LIFE);
 let rows=[],am={},cf={},cv={};
 const T=new Date(); // always use today's date
 
-// Restore data from localStorage on page load
+function rebuildAm(){am={};rows.forEach(r=>{const a=r.aisle;if(!am[a])am[a]=[];am[a].push(r);});}
+function saveProgressLocal(){try{localStorage.setItem('wms_cf',JSON.stringify(cf));localStorage.setItem('wms_cv',JSON.stringify(cv));}catch(e){}}
+let _ccdPushT=null;
+function pushProgress(){if(!window.ccdSaveProgress)return;clearTimeout(_ccdPushT);_ccdPushT=setTimeout(()=>{window.ccdSaveProgress(cf,cv);},600);}
+
+// Re-render whichever aisle grid is currently on screen (after data/progress sync)
+function refreshVisibleGrid(){
+  const sa=document.getElementById('sa'), sr=document.getElementById('sr');
+  if(sa&&sa.classList.contains('active')){
+    const a=Object.keys(am).filter(x=>am[x].some(r=>r.location_type==='S'));renderGrid('ag',a,'sa');
+  }
+  if(sr&&sr.classList.contains('active')){
+    const a=Object.keys(am).filter(x=>am[x].some(r=>r.location_type==='R'));renderGrid('rg',a,'sr');
+  }
+}
+
+// Restore data from localStorage on page load (instant display / offline cache)
 (function restoreFromStorage(){
   try{
     const saved=localStorage.getItem('wms_rows');
@@ -243,12 +362,40 @@ const T=new Date(); // always use today's date
       cv=JSON.parse(localStorage.getItem('wms_cv')||'{}');
       const savedLife=localStorage.getItem('wms_lifeMap');
       if(savedLife) lifeMap=JSON.parse(savedLife);
-      am={};
-      rows.forEach(r=>{const a=r.aisle;if(!am[a])am[a]=[];am[a].push(r);});
+      rebuildAm();
       console.log('Restored '+rows.length+' rows from localStorage');
     }
   }catch(e){console.warn('Could not restore from localStorage:',e);}
 })();
+
+// ── Firebase: pull the newest dataset (source of truth) + live progress ──
+let _ccdProgressUnsub=null;
+async function initFirebaseSync(){
+  // 1) Load the newest dataset from Firebase so every device matches the latest file
+  if(window.ccdLoadDataset){
+    try{
+      const res=await window.ccdLoadDataset();
+      if(res && Array.isArray(res.rows) && res.rows.length){
+        rows=res.rows; rebuildAm();
+        try{localStorage.setItem('wms_rows',JSON.stringify(rows));}catch(e){}
+        refreshVisibleGrid();
+        console.log('Loaded '+rows.length+' rows from Firebase (newest file)');
+      }
+    }catch(e){console.warn('Firebase dataset load failed:',e);}
+  }
+  // 2) Subscribe to confirmation progress from any device
+  if(window.ccdSubscribeProgress){
+    if(_ccdProgressUnsub) _ccdProgressUnsub();
+    _ccdProgressUnsub=window.ccdSubscribeProgress((rcf,rcv)=>{
+      cf=Object.assign({},rcf,cf);   // union confirmations (local kept on conflict)
+      cv=Object.assign({},rcv,cv);
+      saveProgressLocal();
+      refreshVisibleGrid();
+    });
+  }
+}
+// The module script calls this once Firebase is ready (runs after this inline script).
+window.onCcdReady=initFirebaseSync;
 
 function computeKLMN(r){
   try{
@@ -292,10 +439,10 @@ function doUpload(){
   const f=document.getElementById('fi-csv').files[0];
   if(!f)return;
   const rd=new FileReader();
-  rd.onload=e=>{
+  rd.onload=async e=>{
     rows=parseCSV(e.target.result);
-    am={};cf={};cv={};
-    rows.forEach(r=>{const a=r.aisle;if(!am[a])am[a]=[];am[a].push(r);});
+    cf={};cv={};
+    rebuildAm();
     // Persist to localStorage so data survives page refresh
     try{
       localStorage.setItem('wms_rows',JSON.stringify(rows));
@@ -305,6 +452,20 @@ function doUpload(){
     const s=rows.filter(r=>r.location_type==='S').length;
     const rv=rows.filter(r=>r.location_type==='R').length;
     toast('✓ '+rows.length+' items need clearance (N<0) — S:'+s+' R:'+rv);
+    // Push to Firebase as the single newest dataset (deletes old file first)
+    if(window.ccdSaveDataset){
+      const btn=document.getElementById('bu-csv');
+      const old=btn?btn.innerHTML:''; if(btn){btn.disabled=true;btn.innerHTML='<i class="ti ti-cloud-upload"></i> Syncing…';}
+      try{
+        await window.ccdSaveDataset(rows, f.name);
+        toast('☁ Synced to Firebase — all devices now show this file');
+      }catch(err){
+        console.warn('Firebase sync failed:',err);
+        toast('⚠ Saved on this device, but Firebase sync failed (check connection)');
+      }finally{
+        if(btn){btn.disabled=false;btn.innerHTML=old;}
+      }
+    }
   };
   rd.readAsText(f);
 }
@@ -333,8 +494,8 @@ function loadLifeFile(){
   };
   rd.readAsText(f);
 }
-function clearAllData(){
-  if(!confirm('Clear all saved CSV data and confirmations? This cannot be undone.')) return;
+async function clearAllData(){
+  if(!confirm('Clear all saved CSV data and confirmations — on this device AND Firebase (all devices)? This cannot be undone.')) return;
   localStorage.removeItem('wms_rows');
   localStorage.removeItem('wms_cf');
   localStorage.removeItem('wms_cv');
@@ -342,7 +503,12 @@ function clearAllData(){
   rows=[];am={};cf={};cv={};lifeMap=Object.assign({},BUILT_IN_LIFE);
   document.getElementById('fn-csv').textContent='No file chosen';
   document.getElementById('bu-csv').disabled=true;
-  toast('✓ Saved data cleared.');
+  if(window.ccdClearDataset){
+    try{ await window.ccdClearDataset(); toast('✓ Cleared on all devices.'); }
+    catch(e){ toast('✓ Cleared here, but Firebase clear failed.'); }
+  }else{
+    toast('✓ Saved data cleared.');
+  }
 }
 function sortAisles(a){return a.sort((x,y)=>{const nx=parseInt(x),ny=parseInt(y);if(!isNaN(nx)&&!isNaN(ny))return nx-ny;if(!isNaN(nx))return -1;if(!isNaN(ny))return 1;return x.localeCompare(y);});}
 function hoverAisle(el, a, gid){
@@ -521,6 +687,7 @@ function fmtDate(el, key){
   el.value = v;
   cv[key] = v;
   try{localStorage.setItem('wms_cv',JSON.stringify(cv));}catch(e){}
+  pushProgress();
 }
 function pickDate(dp, textId, key){
   // Convert yyyy-mm-dd from date picker to dd/mm/yyyy in text field
@@ -530,6 +697,7 @@ function pickDate(dp, textId, key){
   document.getElementById(textId).value = formatted;
   cv[key] = formatted;
   try{localStorage.setItem('wms_cv',JSON.stringify(cv));}catch(e){}
+  pushProgress();
 }
 function ci(i,key){
   const v=document.getElementById('ccd-'+i).value;
@@ -538,6 +706,7 @@ function ci(i,key){
   if(!/^\d{2}\/\d{2}\/\d{4}$/.test(v)){toast('Please enter date as dd/mm/yyyy');return;}
   cv[key]=v; cf[key]=true;
   try{localStorage.setItem('wms_cf',JSON.stringify(cf));localStorage.setItem('wms_cv',JSON.stringify(cv));}catch(e){}
+  pushProgress();
   // Remove the card from view with a fade animation
   const card=document.getElementById('cb-'+i).closest('.ic');
   if(card){
