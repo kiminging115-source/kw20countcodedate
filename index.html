@@ -311,7 +311,7 @@ body{background:#eef2f7;min-height:100vh}
         <span class="fname" id="fn-csv">No file chosen</span>
         <button class="btn-up" id="bu-csv" onclick="doUpload()" disabled><i class="ti ti-upload"></i> Upload</button>
       </div>
-      <div class="hint">* รองรับไฟล์ .xlsx, .xls, .csv — IVR format</div>
+      <div class="hint">* Supports .xlsx, .xls, .csv — IVR format</div>
     </div>
     <div class="upload-card">
       <div class="upload-label"><i class="ti ti-database"></i> Product Life Table (Excel / CSV) <span style="font-weight:400;color:#6b7280;margin-left:.3rem">— optional override</span></div>
@@ -794,20 +794,20 @@ function renderGrid(gid,aisles,back){
     const items=am[a].filter(r=>r.location_type===tt),tot=items.length;
     const done=items.filter(r=>cf[(r.location_id||r.location)+'|'+(r.product_code||r.product_code_input)]).length;
     const hasNoLife=items.some(r=>r._nolife);
-    let cls='ac',st='ยังไม่เริ่ม';
+    let cls='ac',st='Not Started';
     let bgStyle='', borderStyle='', txtStyle='';
     if(tot>0&&done===tot){
-      cls='ac done';st='นับเสร็จ';
+      cls='ac done';st='Completed';
       bgStyle='background:#1a6e3c';borderStyle='border-color:#1a6e3c';txtStyle='color:#fff';
     } else if(done>0){
-      cls='ac inprog';st='กำลังนับ';
+      cls='ac inprog';st='In Progress';
       bgStyle='background:#f0b429';borderStyle='border-color:#f0b429';txtStyle='color:#1a0f00';
     }
     g.innerHTML+=`<div class="ac" id="ac-${a}-${gid}" style="${bgStyle};${borderStyle}"
       onclick="selectAisle('${a}','${back}','${gid}')"
       onmouseover="hoverAisle(this,'${a}','${gid}')"
       onmouseout="unhoverAisle(this,'${a}','${gid}')">
-      ${hasNoLife?'<span class="ac-warn" title="มีสินค้าที่ไม่มีข้อมูลอายุ"><i class="ti ti-alert-triangle"></i></span>':''}
+      ${hasNoLife?'<span class="ac-warn" title="Contains products with missing life data"><i class="ti ti-alert-triangle"></i></span>':''}
       <div class="an" style="${txtStyle}">${a}</div>
       <div class="ak" style="${txtStyle}">${done}/${tot}</div>
       <div class="as" style="${txtStyle}">${st}</div>
@@ -829,26 +829,23 @@ function openAisle(a,back){
     const isC=!!cf[key],stored=cv[key]||'';
     const K=r._K,L=r._L,M=r._M,N=r._N,pct=r._pct||0;
     const noLife=!!r._nolife;
-    // อายุในคลัง = days since receive_date
+    // Warehouse Age = days since receive_date
     const ageInWarehouse = r.receive_date ? Math.round((T - new Date(r.receive_date))/86400000) : '—';
-    // เกณฑ์คลัง = countbook_qty / boh
+    // Warehouse Threshold = countbook_qty / boh
     const cbq = parseFloat(r.countbook_qty)||parseFloat(r.boh)||0;
-    // เกณฑ์ร้าน = L (store threshold)
+    // Store Threshold = L
     const storeThresh = L;
-    // count_type
-    const ct = r.count_type||'3';
-
     list.innerHTML+=`<div class="ic">
       <div class="ich">
         <div class="ich-left">
-          <div style="font-size:18px;color:#fff;font-weight:600;margin-bottom:5px"><span style="color:#bfdbfe">Loc :</span> ${locId} &nbsp;&nbsp; <span style="color:#bfdbfe">Cross Check Form</span></div>
-          <div style="font-size:18px;color:#fff;font-weight:600;margin-bottom:5px"><span style="color:#bfdbfe">Pro :</span> ${pc} &nbsp;&nbsp; <span style="color:#bfdbfe">${ct} : Both</span></div>
+          <div style="font-size:18px;color:#fff;font-weight:600;margin-bottom:5px"><span style="color:#bfdbfe">Loc :</span> ${locId}</div>
+          <div style="font-size:18px;color:#fff;font-weight:600;margin-bottom:5px"><span style="color:#bfdbfe">Pro :</span> ${pc}</div>
           <div style="font-size:20px;color:#fff;font-weight:700">Des : ${r.description||'—'}</div>
         </div>
         <button class="bmb" onclick="document.getElementById('ibk').click()">← Back</button>
       </div>
 
-      ${noLife?`<div style="background:#E24B4A;color:#fff;padding:.7rem 1rem;display:flex;align-items:center;gap:.5rem;font-size:14px;font-weight:600"><i class="ti ti-alert-triangle" style="font-size:20px"></i><span>ไม่มีข้อมูลอายุสินค้า · ใกล้หมดอายุ (${M} วัน) — กรุณาอัปเดต Product Life</span></div>`:''}
+      ${noLife?`<div style="background:#E24B4A;color:#fff;padding:.7rem 1rem;display:flex;align-items:center;gap:.5rem;font-size:14px;font-weight:600"><i class="ti ti-alert-triangle" style="font-size:20px"></i><span>No product life data · Near expiry (${M} days) — Please update Product Life</span></div>`:''}
 
       <div class="ic-img-wrap" id="img-wrap-${i}" data-pc="${pc}">
         <div class="no-img">
@@ -866,11 +863,11 @@ function openAisle(a,back){
             <div style="font-size:28px;font-weight:700;color:#2563eb">${fmt(r.receive_date)}</div>
           </div>
           <div style="flex:1;background:#f0b429;border-radius:8px;padding:1rem .75rem;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:.3rem">
-            <div style="font-size:13px;font-weight:600;color:#3d2800">อายุในคลัง</div>
+            <div style="font-size:13px;font-weight:600;color:#3d2800">Warehouse Age</div>
             <div style="font-size:28px;font-weight:700;color:#1a0f00">${ageInWarehouse}</div>
           </div>
           <div style="flex:1;background:#17A2B8;border-radius:8px;padding:1rem .75rem;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:.3rem">
-            <div style="font-size:13px;font-weight:600;color:#e0f7fa">เกณฑ์คลัง</div>
+            <div style="font-size:13px;font-weight:600;color:#e0f7fa">Warehouse Threshold</div>
             <div style="font-size:28px;font-weight:700;color:#fff">${noLife?'—':Math.round(K*0.7)}</div>
           </div>
         </div>
@@ -882,11 +879,11 @@ function openAisle(a,back){
             <div style="font-size:28px;font-weight:700;color:#dc2626">${fmt(r.code_date)}</div>
           </div>
           <div style="flex:1;background:${pct>0.6?'#17A2B8':pct>0.5?'#f0b429':'#E24B4A'};border-radius:8px;padding:1rem .75rem;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:.3rem">
-            <div style="font-size:13px;font-weight:600;color:${pct>0.6?'#e0f7fa':pct>0.5?'#3d2800':'#ffe4e4'}">อายุคงเหลือ</div>
+            <div style="font-size:13px;font-weight:600;color:${pct>0.6?'#e0f7fa':pct>0.5?'#3d2800':'#ffe4e4'}">Remaining Life</div>
             <div style="font-size:28px;font-weight:700;color:#fff">${M}</div>
           </div>
           <div style="flex:1;background:#888780;border-radius:8px;padding:1rem .75rem;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:.3rem">
-            <div style="font-size:13px;font-weight:600;color:#e5e5e3">เกณฑ์ร้าน</div>
+            <div style="font-size:13px;font-weight:600;color:#e5e5e3">Store Threshold</div>
             <div style="font-size:28px;font-weight:700;color:#fff">${noLife?'—':L}</div>
           </div>
         </div>
